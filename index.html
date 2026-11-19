@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <!-- Bitter = reemplazo de Kefa III (títulos) · Inter = reemplazo de Galvji (cuerpo) · Chewy = solo para el logo de respaldo -->
 <link href="https://fonts.googleapis.com/css2?family=Bitter:wght@600;700;800&family=Inter:wght@400;500;600;700&family=Chewy&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
 :root{
   /* Paleta de marca */
@@ -172,6 +173,15 @@ textarea.input{min-height:76px;resize:vertical}
 .toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--ink);color:var(--cream);padding:11px 18px;border-radius:999px;font-size:13px;font-weight:600;z-index:100;max-width:90%;text-align:center;animation:up .2s}
 .empty{text-align:center;padding:30px 10px;color:var(--muted)}
 .empty img{width:140px;margin-bottom:10px}
+/* Recompensa + mapa */
+.row>.btn+.btn{margin-top:0}
+.card.reward{border:2px dashed var(--yellow)}
+.amounts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.amounts .chip{border:none;cursor:pointer;font-size:12px}
+.reward-pub{background:var(--yellow);text-align:center;border:3px dashed var(--ink)}
+.reward-pub .amount{font-family:var(--font-title);font-weight:800;font-size:36px;line-height:1.1;margin:4px 0}
+.map{height:260px;border-radius:16px;overflow:hidden;margin-top:10px;border:2px solid var(--line);position:relative;isolation:isolate;background:var(--line)}
+input[type=range]{width:100%;accent-color:var(--orange);margin-top:6px}
 </style>
 </head>
 <body>
@@ -179,6 +189,7 @@ textarea.input{min-height:76px;resize:vertical}
 <noscript>Necesitas activar JavaScript para usar TAGGY.</noscript>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 /* =========================================================
    TAGGY · app funcional (sin backend, datos en localStorage)
@@ -205,7 +216,7 @@ function seed(){
     active:'TG-9204', baseUrl:'',
     pets:[{
       id:'TG-9204', name:'Dember', species:'perro', breed:'Shih Tzu', sex:'M', birth:'2025-05-14',
-      sterilized:true, photo:'', lost:false,
+      sterilized:true, photo:'', lost:false, reward:{on:false, amount:5000, msg:''},
       traits:['Amigable','Juguetón','Teme a pirotecnia','Sociable con perros'],
       records:[
         {id:'r1', type:'alert',   title:'Alergia Severa a la Penicilina', date:'2024-10-12', notes:'Reacción anafiláctica previa reportada. No suministrar derivados de betalactámicos ni amoxicilina bajo ninguna circunstancia médica.'},
@@ -213,11 +224,17 @@ function seed(){
         {id:'r3', type:'vaccine', title:'Vacuna Séxtuple Canina (DHPPi)', date:'2024-10-12', notes:'Dosis 2024-2025 aplicada vía subcutánea interescapular. Tolera sin reacciones adversas locales.', lote:'#VT-8821P', lab:'Zoetis Vanguard', until:'2025-10-12'}
       ]
     }],
-    tutor:{name:'Valentina Palomino', phone:'9991234567', email:'vale.palo@gmail.com', city:'Mérida, Yucatán', zone:'Fracc. Los Héroes', hideAddress:false, cotutor:{name:'Juanito Alcachofas', phone:'9999876543'}}
+    tutor:{name:'Valentina Palomino', phone:'9991234567', email:'vale.palo@gmail.com', city:'Mérida, Yucatán', zone:'Fracc. Los Héroes', hideAddress:false, geo:null, cotutor:{name:'Juanito Alcachofas', phone:'9999876543'}}
   };
 }
+function normalize(d){
+  d.pets.forEach(p=>{ p.reward = p.reward || {on:false, amount:5000, msg:''}; p.records = p.records || []; p.traits = p.traits || []; });
+  d.tutor = d.tutor || {};
+  if(d.tutor.geo === undefined) d.tutor.geo = null;
+  return d;
+}
 function load(){
-  try{ const d = JSON.parse(localStorage.getItem(KEY)); if(d && Array.isArray(d.pets)) return d; }catch(e){}
+  try{ const d = JSON.parse(localStorage.getItem(KEY)); if(d && Array.isArray(d.pets)) return normalize(d); }catch(e){}
   return seed();
 }
 function save(){
@@ -287,7 +304,13 @@ function pubData(p){
     i:p.id, n:p.name, s:p.species, b:p.breed, d:p.birth, x:p.sex, e:p.sterilized?1:0, t:p.traits, l:p.lost?1:0,
     a:p.records.filter(r=>r.type==='alert').map(r=>({t:(r.title||'').slice(0,60), n:(r.notes||'').slice(0,140)})),
     tn:t.name, tp:digits(t.phone), te:t.email, cn:t.cotutor?.name||'', cp:digits(t.cotutor?.phone),
-    z: t.hideAddress ? t.zone : [t.zone,t.city].filter(Boolean).join(', ')
+    z: t.hideAddress ? t.zone : [t.zone,t.city].filter(Boolean).join(', '),
+    rw: p.reward?.on ? Math.round(p.reward.amount||0) : 0,
+    rm: (p.reward?.msg||'').slice(0,100),
+    /* Zona: solo se publica un círculo aproximado, nunca un pin de la casa.
+       Con "ocultar dirección" se redondean las coordenadas (~1 km) y el radio mínimo es 800 m. */
+    g: t.geo ? (t.hideAddress ? [+t.geo.lat.toFixed(2), +t.geo.lng.toFixed(2), Math.max(t.geo.r,800)]
+                              : [+t.geo.lat.toFixed(4), +t.geo.lng.toFixed(4), t.geo.r]) : null
   };
 }
 const b64e = o => btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
@@ -310,15 +333,16 @@ function shell(inner, active){
 }
 
 function route(){
-  closeModal();
+  closeModal(); destroyMaps();
   const h = location.hash || '#/pets';
-  if(h.startsWith('#/p/')){ renderPublic(h.slice(4)); window.scrollTo(0,0); return; }
+  if(h.startsWith('#/p/')){ renderPublic(h.slice(4)); initPubMap(); window.scrollTo(0,0); return; }
   const [, r, sub] = h.split('/');
   const p = cur();
   if(r==='health')      app.innerHTML = shell(vHealth(p), 'health');
   else if(r==='edit')   app.innerHTML = shell(vEdit(p, sub), 'edit');
   else                  app.innerHTML = shell(vPets(p), 'pets');
   if(r==='edit' && sub!=='tutor' && p){ draftTraits=[...p.traits]; draftPhoto=p.photo||''; paintTraits(); }
+  if(r==='edit' && sub==='tutor') initZoneMap();
   window.scrollTo(0,0);
 }
 
@@ -340,7 +364,7 @@ function vPets(p){
       <h2>${esc(p.name||'Sin nombre')}</h2>
       <div class="sub">Raza: ${esc(p.breed||'—')}</div>
       <div class="sub">Edad: ${age(p.birth)}</div>
-      <div style="margin-top:8px"><span class="chip ${p.lost?'coral':'green'}">${p.lost?'⚠ PERDIDO':'● EN CASA / SEGURO'}</span></div>
+      <div style="margin-top:8px"><span class="chip ${p.lost?'coral':'green'}">${p.lost?'⚠ PERDIDO':'● EN CASA / SEGURO'}</span>${p.lost&&p.reward?.on?` <span class="chip yellow">💰 ${money(p.reward.amount).replace(' MXN','')}</span>`:''}</div>
     </div>
   </section>
 
@@ -349,6 +373,8 @@ function vPets(p){
     <span>Escudo Protector ${sp.label}<small>${p.lost?'Modo perdido ACTIVADO':'Toca para activar el modo perdido'}</small></span>
     <span class="switch ${p.lost?'on':''}"></span>
   </button>
+
+  ${rewardCard(p)}
 
   <div class="quick-title">ACCIONES RÁPIDAS</div>
   <div class="quick">
@@ -601,6 +627,7 @@ function vTutor(){
     <div class="sec-title">📍 Domicilio Habitual y Perímetro</div>
     <div class="two"><div><label style="margin-top:0">Ciudad / Estado</label><input class="input" id="tCity" value="${esc(t.city)}"></div><div><label style="margin-top:0">Colonia / Zona</label><input class="input" id="tZone" value="${esc(t.zone)}"></div></div>
     <div class="switch-row" style="align-items:flex-start"><div><b>Ocultar dirección exacta</b><small>Al escanear el collar solo se mostrará tu colonia y zona aproximada, manteniendo privada tu calle y número exterior.</small></div><button type="button" class="switch ${t.hideAddress?'on':''}" id="tHide" data-switch></button></div>
+    ${zoneBlock(t)}
   </div>
 
   <button class="btn primary" data-act="save-tutor">✔ Guardar Datos del Dueño</button>
@@ -614,7 +641,7 @@ function saveTutor(){
   if(!name.value.trim()) return fieldErr(name,'Escribe tu nombre');
   if(digits(phone.value).length!==10) return fieldErr(phone,'El teléfono debe tener 10 dígitos');
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim())) return fieldErr(email,'Correo no válido');
-  Object.assign(S.tutor,{name:name.value.trim(), phone:digits(phone.value), email:email.value.trim(), city:$('#tCity').value.trim(), zone:$('#tZone').value.trim(), hideAddress:$('#tHide').classList.contains('on')});
+  Object.assign(S.tutor,{name:name.value.trim(), phone:digits(phone.value), email:email.value.trim(), city:$('#tCity').value.trim(), zone:$('#tZone').value.trim(), hideAddress:$('#tHide').classList.contains('on'), geo:draftGeo});
   save(); toast('✓ Datos del dueño guardados'); route();
 }
 function cotutorModal(){
@@ -649,6 +676,7 @@ function renderPublic(code){
     <div class="who">${av}<h1>${esc(d.n)}</h1>
       <div class="sub">${esc(d.b||sp.label)} · ${age(d.d)} · ${d.x==='H'?'Hembra':'Macho'}${d.e?' · Esterilizado/a':''}</div></div>
     <main class="screen">
+      ${pubReward(d)}
       ${d.t?.length?`<div class="card"><div class="sec-title">🌟 Cómo soy</div><div class="traits" style="margin:0">${d.t.map((t,i)=>`<span class="chip ${['pink','yellow','blue','green'][i%4]}">${esc(t)}</span>`).join('')}</div></div>`:''}
       ${d.a?.length?`<div class="card" style="background:var(--pink);border:2px solid var(--coral)"><div class="sec-title">⚠ Alertas médicas</div>${d.a.map(a=>`<p style="margin-bottom:8px"><b>${esc(a.t)}</b><br><span class="sub" style="color:var(--ink)">${esc(a.n)}</span></p>`).join('')}</div>`:''}
       <div class="card"><div class="sec-title">📞 Contactar a mi familia</div>
@@ -659,11 +687,134 @@ function renderPublic(code){
           ${d.cp?`<a class="btn ghost" href="tel:+52${d.cp}">📞 Llamar a ${esc(d.cn||'contacto 2')} (respaldo)</a>`:''}
         </div>
       </div>
+      ${pubMapCard(d)}
       <button class="btn yellow" data-act="send-location">📍 Avisar mi ubicación a la familia</button>
       ${local?`<button class="link-red" style="color:var(--ink)" data-go="#/pets">← Volver a la app</button>`:''}
       <div class="foot">Placa protegida por TAGGY 🐾</div>
     </main></div>`;
 }
+/* =========================================================
+   RECOMPENSA
+   ========================================================= */
+const money = n => '$' + Number(n||0).toLocaleString('es-MX') + ' MXN';
+function rewardCard(p){
+  const r = p.reward || {on:false, amount:5000, msg:''};
+  return `<div class="card reward">
+    <div class="between"><div class="sec-title" style="margin:0">💰 Recompensa</div><button class="switch ${r.on?'on':''}" data-act="toggle-reward" aria-label="Ofrecer recompensa"></button></div>
+    <p class="sub" style="margin-top:6px">${r.on ? 'Se mostrará en la placa pública mientras el modo perdido esté activo.' : 'Ofrece una recompensa para motivar a quien lo encuentre.'}</p>
+    ${r.on ? `
+      <label>Monto (MXN)</label>
+      <input class="input" id="rwAmount" type="number" inputmode="numeric" min="0" step="100" value="${r.amount}">
+      <div class="amounts">${[1000,2500,5000,10000].map(a=>`<button type="button" class="chip ${r.amount===a?'yellow':''}" data-act="rw-amt" data-id="${a}">${money(a).replace(' MXN','')}</button>`).join('')}</div>
+      <label>Mensaje (opcional)</label>
+      <input class="input" id="rwMsg" maxlength="100" value="${esc(r.msg)}" placeholder="Ej. Se entrega al recibirlo sano y salvo">` : ''}
+  </div>`;
+}
+function pubReward(d){
+  if(!d.l || !d.rw) return '';
+  return `<div class="card reward-pub"><div class="eyebrow" style="color:var(--ink)">RECOMPENSA</div><div class="amount">${money(d.rw)}</div><p>${d.rm ? esc(d.rm) : 'Para quien ayude a regresarlo a casa 💛'}</p></div>`;
+}
+
+/* =========================================================
+   MAPA DE ZONA (Leaflet + OpenStreetMap) y ubicación en vivo
+   ========================================================= */
+let zoneMap=null, zoneLayer=null, zoneDot=null, pubMap=null, watchId=null, liveDot=null, draftGeo=null;
+const DEFAULT_CENTER=[20.9674,-89.5926]; // Mérida, Yuc.
+
+function destroyMaps(){
+  if(watchId!==null){ navigator.geolocation?.clearWatch(watchId); watchId=null; }
+  if(zoneMap){ zoneMap.remove(); zoneMap=null; }
+  if(pubMap){ pubMap.remove(); pubMap=null; }
+  zoneLayer=zoneDot=liveDot=null;
+}
+function dist(a,b){ // metros (haversine)
+  const R=6371000, t=x=>x*Math.PI/180, dLa=t(b[0]-a[0]), dLo=t(b[1]-a[1]);
+  const h=Math.sin(dLa/2)**2 + Math.cos(t(a[0]))*Math.cos(t(b[0]))*Math.sin(dLo/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+const fmtDist = m => m<1000 ? (Math.round(m/10)*10)+' m' : (m/1000).toFixed(1)+' km';
+function baseMap(el, center, zoom){
+  const m=L.map(el).setView(center,zoom);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'© OpenStreetMap'}).addTo(m);
+  setTimeout(()=>m.invalidateSize(),150);
+  return m;
+}
+const ZONE_STYLE={color:'#e38b70', weight:3, fillColor:'#e38b70', fillOpacity:.28};
+
+/* --- Mapa del tutor: marcar dónde vive normalmente --- */
+function zoneBlock(t){
+  const g=t.geo;
+  return `<label>📍 Zona donde normalmente vive <span class="sub">(toca el mapa para marcarla)</span></label>
+  <div class="add-row"><input class="input" id="zoneQ" placeholder="Buscar colonia o dirección…"><button type="button" class="mini-btn" style="background:var(--yellow);padding:0 14px" data-act="zone-search">Buscar</button></div>
+  <div id="zoneMap" class="map"></div>
+  <div class="between" style="margin-top:10px"><span class="sub">Radio de la zona</span><b id="zoneRTxt">${fmtDist(g?g.r:500)}</b></div>
+  <input type="range" id="zoneR" min="150" max="3000" step="50" value="${g?g.r:500}">
+  <div class="row" style="margin-top:10px">
+    <button type="button" class="btn blue" style="padding:10px;font-size:12px" data-act="zone-here">📍 Usar mi ubicación</button>
+    <button type="button" class="btn ghost" style="padding:10px;font-size:12px" data-act="zone-live">📡 Ver en vivo</button>
+  </div>
+  <p class="info" id="zoneInfo" style="text-align:left">${g?'':'Aún no has marcado la zona. '}Quien escanee la placa verá este círculo (no tu casa exacta) y qué tan lejos está de él, en tiempo real.</p>`;
+}
+function initZoneMap(){
+  draftGeo = S.tutor.geo ? {...S.tutor.geo} : null;
+  const el=$('#zoneMap'); if(!el) return;
+  if(typeof L==='undefined'){ el.innerHTML='<div class="empty">No se pudo cargar el mapa (revisa tu conexión).</div>'; return; }
+  zoneMap=baseMap(el, draftGeo?[draftGeo.lat,draftGeo.lng]:DEFAULT_CENTER, draftGeo?15:12);
+  zoneMap.on('click', e=>setZone(e.latlng.lat, e.latlng.lng));
+  paintZone(true);
+}
+function setZone(lat,lng){ const r=draftGeo?.r || +$('#zoneR')?.value || 500; draftGeo={lat,lng,r}; paintZone(false); }
+function paintZone(fit){
+  if(!zoneMap) return;
+  if(zoneLayer){ zoneMap.removeLayer(zoneLayer); zoneLayer=null; }
+  if(zoneDot){ zoneMap.removeLayer(zoneDot); zoneDot=null; }
+  if(!draftGeo) return;
+  const ll=[draftGeo.lat,draftGeo.lng];
+  zoneLayer=L.circle(ll,{...ZONE_STYLE, radius:draftGeo.r}).addTo(zoneMap);
+  zoneDot=L.circleMarker(ll,{radius:7,color:'#fff',weight:3,fillColor:'#f09200',fillOpacity:1}).addTo(zoneMap);
+  if(fit) zoneMap.fitBounds(zoneLayer.getBounds(),{maxZoom:16,padding:[20,20]});
+}
+
+/* --- Seguimiento en vivo (watchPosition) --- */
+function toggleLive(map, btn, onPos){
+  if(watchId!==null){ stopLive(map,btn); return; }
+  if(!navigator.geolocation){ toast('Tu dispositivo no permite ubicación'); return; }
+  btn.dataset.off = btn.dataset.off || btn.textContent;
+  btn.textContent='⏹ Detener';
+  let first=true;
+  watchId=navigator.geolocation.watchPosition(pos=>{
+    const ll=[pos.coords.latitude,pos.coords.longitude];
+    if(!liveDot) liveDot=L.circleMarker(ll,{radius:8,color:'#fff',weight:3,fillColor:'#2f80ed',fillOpacity:1}).addTo(map); else liveDot.setLatLng(ll);
+    onPos(ll, first);
+    first=false;
+  }, err=>{ toast(err.code===1?'Permiso de ubicación denegado':'No pude obtener tu ubicación'); stopLive(map,btn); },
+  {enableHighAccuracy:true, maximumAge:3000, timeout:20000});
+}
+function stopLive(map,btn){
+  if(watchId!==null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+  if(liveDot && map){ map.removeLayer(liveDot); }
+  liveDot=null;
+  if(btn && btn.dataset.off) btn.textContent=btn.dataset.off;
+}
+
+/* --- Mapa en la placa pública: zona + posición en vivo de quien la escanea --- */
+function pubMapCard(d){
+  if(!d.g) return '';
+  return `<div class="card"><div class="sec-title">📍 Zona donde vive ${esc(d.n)}</div>
+    <div id="pubMap" class="map"></div>
+    <p class="sub" id="pubInfo" style="margin:10px 0">Este círculo marca la zona aproximada donde ${esc(d.n)} suele estar. Activa tu ubicación para ver qué tan cerca estás.</p>
+    <button class="btn blue" data-act="pub-live">📡 Ver mi ubicación en vivo</button></div>`;
+}
+function initPubMap(){
+  if(!PUB?.g) return;
+  const el=$('#pubMap'); if(!el) return;
+  if(typeof L==='undefined'){ el.innerHTML='<div class="empty">No se pudo cargar el mapa.</div>'; return; }
+  const [lat,lng,r]=PUB.g;
+  pubMap=baseMap(el,[lat,lng],14);
+  const c=L.circle([lat,lng],{...ZONE_STYLE, radius:r}).addTo(pubMap);
+  pubMap.fitBounds(c.getBounds(),{maxZoom:16,padding:[20,20]});
+}
+
 function sendLocation(){
   if(!PUB?.tp){ toast('Esta placa no tiene teléfono'); return; }
   if(!navigator.geolocation){ toast('Tu dispositivo no permite compartir ubicación'); return; }
@@ -689,11 +840,45 @@ document.addEventListener('click', async e=>{
     case 'pick-pet': S.active=id; save(); route(); break;
     case 'new-pet': {
       const nid='TG-'+Math.floor(1000+Math.random()*9000);
-      S.pets.push({id:nid,name:'',species:'perro',breed:'',sex:'M',birth:'',sterilized:false,photo:'',traits:[],lost:false,records:[]});
+      S.pets.push({id:nid,name:'',species:'perro',breed:'',sex:'M',birth:'',sterilized:false,photo:'',traits:[],lost:false,reward:{on:false,amount:5000,msg:''},records:[]});
       S.active=nid; save(); go('#/edit/pet'); break; }
     case 'toggle-lost':
       p.lost=!p.lost; save(); route();
       toast(p.lost?'⚠ Modo perdido activado: la placa lo mostrará':'✓ Qué alivio, modo perdido desactivado'); break;
+    case 'toggle-reward': p.reward=p.reward||{on:false,amount:5000,msg:''}; p.reward.on=!p.reward.on; save(); route(); break;
+    case 'rw-amt': p.reward.amount=+id; save(); route(); break;
+    case 'zone-here':
+      if(!navigator.geolocation){ toast('Tu dispositivo no permite ubicación'); break; }
+      toast('Buscando tu ubicación…');
+      navigator.geolocation.getCurrentPosition(pos=>{ setZone(pos.coords.latitude,pos.coords.longitude); paintZone(true); toast('Zona marcada en tu ubicación ✓ (recuerda guardar)'); },
+        ()=>toast('No pude obtener tu ubicación. Activa el permiso.'), {enableHighAccuracy:true, timeout:12000});
+      break;
+    case 'zone-search': {
+      const q=$('#zoneQ').value.trim();
+      if(!q){ toast('Escribe una colonia o dirección'); break; }
+      try{
+        const res=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=es&q='+encodeURIComponent(q));
+        const j=await res.json();
+        if(!j[0]){ toast('No encontré ese lugar'); break; }
+        setZone(+j[0].lat,+j[0].lon); paintZone(true);
+      }catch(err){ toast('No pude buscar ahora. Toca el mapa para marcar la zona.'); }
+      break; }
+    case 'zone-live':
+      if(!zoneMap){ toast('El mapa no está disponible'); break; }
+      toggleLive(zoneMap, a, (ll,first)=>{
+        if(draftGeo){
+          const d=dist(ll,[draftGeo.lat,draftGeo.lng]);
+          $('#zoneInfo').textContent = `📡 Tu posición en vivo: a ${fmtDist(d)} del centro de la zona${d<=draftGeo.r?' (dentro ✓)':''}.`;
+          if(first) zoneMap.fitBounds(L.latLngBounds([ll,[draftGeo.lat,draftGeo.lng]]).pad(.3));
+        } else if(first){ zoneMap.setView(ll,16); $('#zoneInfo').textContent='📡 Tu posición en vivo (punto azul). Toca el mapa para marcar la zona.'; }
+      }); break;
+    case 'pub-live':
+      if(!pubMap){ toast('El mapa no está disponible'); break; }
+      toggleLive(pubMap, a, (ll,first)=>{
+        const [lat,lng,r]=PUB.g, d=dist(ll,[lat,lng]), out=Math.max(0,d-r);
+        $('#pubInfo').innerHTML = out===0 ? `🏡 Estás <b>dentro</b> de la zona habitual de ${esc(PUB.n)}. Probablemente vive muy cerca.` : `Estás a <b>${fmtDist(out)}</b> de la zona habitual de ${esc(PUB.n)}.`;
+        if(first) pubMap.fitBounds(L.latLngBounds([ll,[lat,lng]]).pad(.4));
+      }); break;
     case 'add-record': recordModal(); break;
     case 'edit-record': recordModal(id); break;
     case 'del-record': if(await confirmBox('¿Borrar este registro de salud?','Borrar',true)){ p.records=p.records.filter(r=>r.id!==id); save(); route(); toast('Registro borrado'); } break;
@@ -723,8 +908,12 @@ document.addEventListener('click', async e=>{
 });
 document.addEventListener('keydown', e=>{
   if(e.key==='Enter' && e.target.id==='traitIn'){ e.preventDefault(); $('[data-act="add-trait"]').click(); }
+  if(e.key==='Enter' && e.target.id==='zoneQ'){ e.preventDefault(); $('[data-act="zone-search"]').click(); }
 });
 document.addEventListener('input', e=>{
+  if(e.target.id==='rwAmount'){ cur().reward.amount=Math.max(0,Math.min(10000000,Math.round(+e.target.value||0))); save(); }
+  if(e.target.id==='rwMsg'){ cur().reward.msg=e.target.value.slice(0,100); save(); }
+  if(e.target.id==='zoneR'){ const r=+e.target.value; $('#zoneRTxt').textContent=fmtDist(r); if(draftGeo){ draftGeo.r=r; paintZone(false); } }
   if(e.target.id==='fBirth') $('#ageHint').textContent = e.target.value ? '· '+age(e.target.value) : '';
   if(e.target.id==='tPhone' || e.target.id==='cPhone'){ const d=digits(e.target.value); e.target.value = d.length===10 ? fmtPhone(d) : d; }
 });
@@ -738,7 +927,7 @@ document.addEventListener('change', async e=>{
       const d=JSON.parse(await e.target.files[0].text());
       if(!Array.isArray(d.pets)||!d.tutor) throw 0;
       if(!await confirmBox('Esto reemplazará todos tus datos actuales. ¿Continuar?','Importar')) return;
-      S=d; save(); toast('Respaldo importado ✓'); go('#/pets');
+      S=normalize(d); save(); toast('Respaldo importado ✓'); go('#/pets');
     }catch(err){ toast('Ese archivo no es un respaldo válido de TAGGY'); }
   }
 });
